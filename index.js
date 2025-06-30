@@ -282,7 +282,7 @@ app.post("/cours", interceptor, (requete, resultat) => {
     cours.nom_cours.length > 20 ||
     cours.type_cours.length > 50
   ) {
-    return resultat.sendStatus(400); //bad request
+    return resultat.sendStatus(400);
   }
 
   //verification si le nom du produit existe déjà
@@ -303,7 +303,6 @@ app.post("/cours", interceptor, (requete, resultat) => {
           cours.sexe_dog,
           cours.categorie_acceptee,
           cours.date_cours,
-          requete.user.id,
         ],
         (err, lignes) => {
           if (err) {
@@ -426,3 +425,135 @@ app.post("/connexion", (requete, resultat) => {
 });
 
 app.listen(5000, () => console.log("le serveur écoute sur le port 5000 !!"));
+
+app.post("/reservation", interceptor, (req, res) => {
+  const idUtilisateur = req.user.id; // depuis le token
+  const idSeance = req.body.id_seance;
+  console.log(idUtilisateur, idSeance);
+  if (!idSeance) {
+    return res.status(400).send("ID du cours requis.");
+  }
+
+  connection.query(
+    "INSERT INTO reservation (id_utilisateur, id_seance, date_reservation) VALUES (?, ?, NOW())",
+    [idUtilisateur, idSeance],
+    (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).send("Erreur lors de la réservation.");
+      }
+      res.status(201).send({ message: "Réservation effectuée avec succès" });
+    }
+  );
+});
+
+app.get("/reservation", interceptor, (req, res) => {
+  const idUtilisateur = req.user.id;
+
+  connection.query(
+    `SELECT reservation.*, cours.nom_cours, seance.date_seance
+     FROM reservation 
+     JOIN seance ON reservation.id_seance = seance.id_seance
+     JOIN cours ON seance.id_cours = cours.id_cours
+     WHERE reservation.id_utilisateur = ?`,
+    [idUtilisateur],
+    (err, reservations) => {
+      if (err) {
+        console.error(err);
+        return res.sendStatus(500);
+      }
+      res.json(reservations);
+    }
+  );
+});
+
+app.get("/seance/list", (req, res) => {
+  connection.query(
+    `SELECT seance.*, cours.nom_cours
+     FROM seance
+     LEFT JOIN cours ON seance.id_cours = cours.id_cours`,
+    (err, seances) => {
+      if (err) {
+        console.error(err);
+        return res.sendStatus(500);
+      }
+      res.json(seances);
+    }
+  );
+});
+app.post("/seance/:id", interceptor, (requete, resultat) => {
+  const seance = requete.body;
+
+  if (requete.user.role != "admin" && requete.user.role != "coach") {
+    return resultat.sendStatus(403);
+  }
+
+  //validation
+  if (seance.date_seance == null) {
+    return resultat.sendStatus(400);
+  }
+
+  //verification si le nom du produit existe déjà
+  connection.query(
+    "SELECT * FROM seance WHERE id_cours = ?",
+    [requete.params.id],
+    (err, seances) => {
+      if (seances.length > 0) {
+        return resultat.sendStatus(409); //conflict
+      }
+
+      connection.query(
+        "INSERT INTO seance ( date_seance, id_cours) VALUES (?, ?) ",
+        [seance.date_seance, requete.params.id],
+        (err, lignes) => {
+          if (err) {
+            console.error(err);
+            return resultat.sendStatus(500); //internal server,
+          }
+          return resultat.status(201).json(seance); //created
+        }
+      );
+    }
+  );
+});
+
+app.delete("/seance/:id", interceptor, (requete, resultat) => {
+  //on recup la seance
+  connection.query(
+    "SELECT * FROM seance WHERE id_seance = ?",
+    [requete.params.id],
+    (erreur, lignes) => {
+      //si il y a une erreur
+      if (erreur) {
+        console.error(erreur);
+        return resultat.sendStatus(500); //internal servor
+      }
+      //si l'id du chien est inconnu
+      if (lignes.length == 0) {
+        return resultat.sendStatus(404);
+      }
+      //on verifie si l'utilisateur connecté est le propriétaire
+      const estPropriétaire =
+        requete.user.role == "coach" || requete.user.role == "admin";
+      // requete.user.id == lignes[0].id_utilisateur;
+
+      if (!estPropriétaire) {
+        return resultat.sendStatus(403);
+      }
+      // on supprime la séance
+      connection.query(
+        "DELETE FROM seance WHERE id_seance = ?",
+        [requete.params.id],
+        (erreur, lignes) => {
+          //si il y a une erreur
+          if (erreur) {
+            console.error(erreur);
+            return resultat.sendStatus(500); //internal servor
+          }
+          //204 = no content = tout s'est bien passé, mais il n'y a rien dans le corps de la réponse
+          return resultat.sendStatus(204);
+        }
+      );
+    }
+  );
+});
